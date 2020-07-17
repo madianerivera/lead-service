@@ -1,0 +1,141 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: lead-service
+frameworkVersion: ">=1.1.0 <2.0.0"
+
+provider:
+  name: aws
+  runtime: nodejs12.x
+  stage: dev
+  region: us-east-1
+
+iamRoleStatements: # permissions for all of your functions can be set here
+    - Effect: Allow
+      Action: # Gives permission to DynamoDB tables in a specific region
+        - dynamodb:DescribeTable
+        - dynamodb:Query
+        - dynamodb:Scan
+        - dynamodb:GetItem
+        - dynamodb:PutItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+      Resource: 'arn:aws:dynamodb:us-east-1:*:*'
+
+functions:
+  addLead:
+    handler: api/lead.submit
+    description: Add lead in DynamoDB
+    events:
+      - stream: !GetAtt LeadDynamoDBTable.StreamArn
+  insertToCRM:
+    handler: api/queue1.submit
+    description: Insert lead into CRM
+    events:
+      - sqs: !GetAtt MyFirstQueue.Arn
+  enrichData:
+    handler: api/queue2.submit
+    description: Data enrichment
+    events:
+      - sqs: !GetAtt MySecondQueue.Arn
+  insertToDialer:
+    handler: api/queue3.submit
+    description: Insert to Dialer
+    events:
+      - sqs: !GetAtt MyThirdQueue.Arn
+
+resources:
+  Resources:
+    LeadDynamoDBTable:
+      Type: 'AWS::DynamoDB::Table'
+      TableName: LeadTable
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: 'firstName'
+            AttributeType: 'S'
+          - AttributeName: 'lastName'
+            AttributeType: 'S'
+          - AttributeName: 'phoneNumber'
+            AttributeType: 'N'
+        KeySchema:
+          - AttributeName: 'firstName'
+            KeyType: 'HASH'
+          - AttributeName: 'lastName'
+            KeyType: 'HASH'
+          - AttributeName: 'phoneNumber'
+            KeyType: 'RANGE'
+        ProvisionedThroughput:
+          ReadCapacityUnits: 1
+          WriteCapacityUnits: 1
+        StreamSpecification:
+          StreamViewType: 'NEW_IMAGE'
+    MyFirstQueue:
+      Type: 'AWS::SQS::Queue'
+      Properties:
+        QueueName: 'MyFirstQueue'
+    MySecondQueue:
+      Type: 'AWS::SQS::Queue'
+      Properties:
+        QueueName: 'MySecondQueue'
+    MyThirdQueue:
+      Type: 'AWS::SQS::Queue'
+      Properties:
+        QueueName: 'MyThirdQueue'
+    AlarmTopic:
+      Type: 'AWS::SNS::Topic'
+      Properties:
+        Subscription:
+          -
+            Endpoint:
+              Ref: AlarmEmail
+            Protocol: 'email'
+          -
+            Endpoint:
+              !GetAtt MyFirstQueue.Arn
+            Protocol: sqs
+          -
+            Endpoint:
+              !GetAtt MySecondQueue.Arn
+            Protocol: 
+          -
+            Endpoint:
+              !GetAtt MyThirdQueue.Arn
+            Protocol: sqs
+    MySNS:
+      Type: 'AWS::SNS:Subscription'
+      Properties:
+        TopicArn: !Ref AlarmTopic
+
+plugins:
+  - serverless-plugin-aws-alerts # CloudWatch
+  - serverless-parameters
+
+custom:
+  alerts:
+    stages:
+      - production
+    dashboards: true
+    topics:
+      alarm:
+        topic: ${self:service}-${opt:stage}-alerts-alarm
+        notifications:
+          - protocol: email
+            endpoint: example@domain.com # email address to send notif
+    alarms:
+      - functionErrors
+      - functionThrottles
+
+  parameters:
+    AlarmEmail:
+      Type: String
+      Default: example@domain.com
